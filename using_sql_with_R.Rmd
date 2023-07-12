@@ -1,0 +1,163 @@
+---
+title: "Using SQL Databases"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=FALSE)
+
+```
+
+## Databases
+
+Databases are obviously the standard for remote data storage, though they're a whole different level of security issues, IT, networking, cost, and management. Rstudio has [nice documentation](https://db.rstudio.com/) on best practices for interacting with databases but here are a few code chunks to get started.
+
+
+## Pros and Cons
+
+### Pros
+
++ The industry standard
++ Data is securely saved on a server
++ Many other people, and apps can access the 'single source of truth'
++ It's fast and stores a lot of data.
+
+### Cons
+
++ Hard to setup and manage, usually managed by IT rather than data people
++ You have to be careful about passwords
++ Errors can have wide consequences 
+
+
+<br><br>
+
+## Examples
+
+## Connecting to a SQL database
+
+This can sometimes be the most frustrating part of the whole process. A SQL database driver is needed to connect to a SQL database. Sometimes there's one already on your computer; the R function `odbc::odbcListDrivers()` will list any drivers available on your machine. If there isn't anything there, a driver might need to be installed on your computer (or server) to connect and you'll need one that's compatible with your database and your computer's operating system. **The driver required for shinyapps.io is `SQLServer`**; there are numerous threads that discuss other drivers but this will yield the best results as off July 2023.
+
+The server info is best saved as an environmental variable, and it can come in the form of an IP address or a url-like string of characters. You'll need a user ID and password as well. Regarding the ID and password, if you save your code to git or github, never save the password or ID in the code. Save them using environmental variables so they won't be committed to git.
+
+```{r}
+# libraries
+library(tidyverse)
+library(odbc)
+library(DBI)
+
+
+### this connects R to a database
+
+conn <- dbConnect( odbc::odbc(),
+                        driver = "SQL Server", ## or whatever driver you have installed
+                        Server = Sys.getenv("lme_ip"), ### location of database, saved as an env variable
+                        Database = "lme",  ## name of database
+                        Uid = Sys.getenv("lme_id"),  ### your ID, saved as an environmental variable
+                        Pwd = Sys.getenv("lme_pw") ) ### your password, saved as an environmental variable
+```
+
+
+### Reading Data from a SQL database
+
+```{r}
+
+
+### writing a query using standard sql, 
+### this results in a dataframe with three columns filtered on one type of revenue code
+
+
+  the_df <- dbGetQuery(conn, ## 'conn' is the database connection established above
+                          "
+                          SELECT id, effective_date, status, revenue_code_id
+                          FROM quotes
+                          WHERE revenue_code_id = 'DYLTL'
+                          ")
+
+
+### writing a query using dplyr syntax, the result is the same
+### this is less flexible than writing SQL but more familiar for R users
+
+  the_df <- tbl(conn, 'quotes') %>% 
+    filter(revenue_code_id == 'DYLTL') %>% 
+    collect()
+
+
+  ### once the data is fetched from the sql database, the datafame can be used for anything in R
+  
+
+```
+
+
+
+
+### Move the work to SQL
+
+When it comes to data aggregation, R is pretty slow compared to SQL. When possible, do the data aggregating in the SQL query rather than in R.
+
+```{r}
+
+###
+### The slow, inefficient way 
+###
+
+
+### query all of the records in the database and get them into R
+
+  the_df_raw_from_sql <- dbGetQuery(conn,
+                          "
+                          SELECT id, effective_date, quantity, revenue_code_id
+                          FROM quotes
+                          ")
+
+
+### Then filter and aggregate in R
+
+the_df_raw_from_sql %>% 
+  filter(revenue_code_id == 'DYLTL') %>% 
+  group_by(revenue_code_id) %>% 
+  summarise(total_quantity = sum(quantity))
+
+
+
+###
+### The faster way 
+
+### move all of the work to sql before coming into R.
+### it's the same result, but faster and less work for your computer.
+
+  the_df_agged_from_sql <- dbGetQuery(conn,
+                          "
+                          SELECT sum(quantity) total_quantity, revenue_code_id
+                          FROM quotes
+                          where revenue_code_id == 'DYLTL'
+                          group by revenue_code_id
+                          ")
+
+
+
+```
+
+
+
+
+
+
+## Writing and updating tables
+
+```{r eval=FALSE}
+### write a dataframe to a SQL table, this will replace an existing table
+dbWriteTable(conn, name = "mtcars_db", value = mtcars, overwrite = TRUE)
+
+
+### append a dataframe on to a SQL table
+dbWriteTable(conn, "mtcars_db", 
+             mtcars, append = TRUE, overwrite =FALSE)
+
+
+### updating a table. there are a few ways but here's one that works
+dbExecute(conn, "UPDATE test_table_update 
+                    SET somefield = 'new value'  
+                    WHERE name = 'fred'")
+
+
+```
